@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: event_mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE}
+    volumes:
+      - ./data:/data/db
+    networks:
+      - event_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: event_backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      MONGO_URI: mongodb://admin:admin@event_mongodb:27017/eventdb?authSource=eventdb
+      DATABASE_NAME: eventdb
+      SECRET_KEY: mysecretkey
+      FLASK_ENV: development
+    depends_on:
+      - mongodb
+    networks:
+      - event_network
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: event_frontend
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      API_BASE_URL: http://event_backend:5000/api
+    depends_on:
+      - backend
+    networks:
+      - event_network
+    volumes:
+      - ./frontend:/app
+volumes:
+  mongodb_data:
+
+networks:
+  event_network:
+    driver: bridge
