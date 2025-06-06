@@ -12,34 +12,41 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
       MONGO_INITDB_DATABASE: ${MONGO_DATABASE}
     volumes:
-      - ./data:/data/db
+      - mongodb_data:/data/db  # Use named volume instead of bind mount
     networks:
       - event_network
 
   backend:
+    # For development - use build
     build:
       context: ./backend
       dockerfile: Dockerfile
+    # For production - CI/CD will replace this with image reference
+    image: ${DOCKER_USERNAME}/event-backend:${IMAGE_TAG:-latest}
     container_name: event_backend
     restart: unless-stopped
     ports:
       - "5000:5000"
     environment:
-      MONGO_URI: mongodb://admin:admin@event_mongodb:27017/eventdb?authSource=eventdb
-      DATABASE_NAME: eventdb
-      SECRET_KEY: mysecretkey
-      FLASK_ENV: development
+      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@event_mongodb:27017/${MONGO_DATABASE}?authSource=admin
+      DATABASE_NAME: ${MONGO_DATABASE}
+      SECRET_KEY: ${SECRET_KEY}
+      FLASK_ENV: production
     depends_on:
       - mongodb
     networks:
       - event_network
-    volumes:
-      - ./backend:/app
+    # Remove volume mount for production
+    # volumes:
+    #   - ./backend:/app
 
   frontend:
+    # For development - use build
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    # For production - CI/CD will replace this with image reference
+    image: ${DOCKER_USERNAME}/event-frontend:${IMAGE_TAG:-latest}
     container_name: event_frontend
     restart: unless-stopped
     ports:
@@ -50,8 +57,10 @@ services:
       - backend
     networks:
       - event_network
-    volumes:
-      - ./frontend:/app
+    # Remove volume mount for production
+    # volumes:
+    #   - ./frontend:/app
+
 volumes:
   mongodb_data:
 
