@@ -7,7 +7,7 @@ import pandas as pd
 import os
 
 # Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:5000/api")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://event_backend:5000/api")
 
 # Page configuration
 st.set_page_config(
