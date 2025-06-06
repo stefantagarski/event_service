@@ -1,4 +1,4 @@
-name: EventService_KIII
+name: EventService CI/CD
 on:
   push:
     branches:
@@ -106,28 +106,61 @@ jobs:
             cat > docker-compose.yml << 'EOF'
             version: '3.8'
             services:
+              mongodb:
+                image: mongo:7.0
+                container_name: mongodb
+                ports:
+                  - "27017:27017"
+                environment:
+                  - MONGO_INITDB_ROOT_USERNAME=admin
+                  - MONGO_INITDB_ROOT_PASSWORD=password123
+                volumes:
+                  - mongodb_data:/data/db
+                restart: unless-stopped
+                networks:
+                  - app-network
+                
               backend:
                 image: ${{ secrets.DOCKER_USERNAME }}/event-backend:latest
+                container_name: flask-backend
                 ports:
-                  - "3001:3001"  # Adjust port as needed
+                  - "5000:5000"  # Flask default port
                 environment:
-                  - NODE_ENV=production
+                  - FLASK_ENV=production
+                  - MONGODB_URI=mongodb://admin:password123@mongodb:27017/
+                depends_on:
+                  - mongodb
                 restart: unless-stopped
+                networks:
+                  - app-network
                 
               frontend:
                 image: ${{ secrets.DOCKER_USERNAME }}/event-frontend:latest
+                container_name: streamlit-frontend
                 ports:
-                  - "80:80"      # Nginx default port
-                  - "3000:3000"  # React dev server port (if applicable)
+                  - "8501:8501"  # Streamlit default port
+                  - "80:8501"    # Also expose on port 80 for easier access
+                environment:
+                  - BACKEND_URL=http://backend:5000
                 depends_on:
                   - backend
                 restart: unless-stopped
+                networks:
+                  - app-network
+                  
+            volumes:
+              mongodb_data:
+                
+            networks:
+              app-network:
+                driver: bridge
             EOF
             
             # Stop and remove existing containers
             docker-compose down || true
             
             # Pull latest images
+            docker pull mongo:latest
             docker pull ${{ secrets.DOCKER_USERNAME }}/event-backend:latest
             docker pull ${{ secrets.DOCKER_USERNAME }}/event-frontend:latest
             
