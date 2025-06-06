@@ -1,4 +1,4 @@
-name: KIII-EventService
+name: CI/CD Pipeline
 
 on:
   push:
@@ -21,17 +21,13 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    # Step 3: Build the Docker image
-    - name: Build Docker image
+    # Step 3: Build and push Docker images using docker-compose
+    - name: Build and push Docker images
       run: |
-        docker build -t ${{ secrets.DOCKER_USERNAME }}/event_service:latest .
+        docker-compose -f docker-compose.yml build
+        docker-compose -f docker-compose.yml push
 
-    # Step 4: Push the Docker image to DockerHub
-    - name: Push Docker image to DockerHub
-      run: |
-        docker push ${{ secrets.DOCKER_USERNAME }}/event_service:latest
-
-    # Step 5: Deploy to AWS EC2
+    # Step 4: Deploy to EC2
     - name: Deploy to EC2
       uses: appleboy/ssh-action@v0.1.8
       with:
@@ -40,7 +36,6 @@ jobs:
         key: ${{ secrets.EC2_SSH_KEY }}
         port: 22
         script: |
-          docker pull ${{ secrets.DOCKER_USERNAME }}/event_service:latest
-          docker stop event_service || true
-          docker rm event_service || true
-          docker run -d --name event_service -p 80:8501 ${{ secrets.DOCKER_USERNAME }}/event_service:latest
+          docker-compose -f docker-compose.yml pull
+          docker-compose -f docker-compose.yml down
+          docker-compose -f docker-compose.yml up -d
