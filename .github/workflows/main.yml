@@ -1,4 +1,4 @@
-name: EventService_KIII
+name: CI/CD Pipeline
 
 on:
   push:
@@ -30,8 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
-      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ env.IMAGE_TAG }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -45,34 +44,32 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ secrets.DOCKER_USERNAME }}/your-app-name
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push Docker image
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push with docker-compose (alternative)
-        if: false  # Set to true if you prefer docker-compose
+      - name: Set up environment variables
         run: |
-          # Tag images with commit SHA for better versioning
-          export IMAGE_TAG=${{ github.sha }}
-          docker-compose -f docker-compose.yml build
-          docker-compose -f docker-compose.yml push
+          echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_ENV
+          echo "DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}" >> $GITHUB_ENV
+
+      - name: Build backend Docker image
+        run: |
+          cd backend
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/event-backend:latest .
+          docker tag ${{ secrets.DOCKER_USERNAME }}/event-backend:latest ${{ secrets.DOCKER_USERNAME }}/event-backend:${{ github.sha }}
+
+      - name: Build frontend Docker image
+        run: |
+          cd frontend
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/event-frontend:latest .
+          docker tag ${{ secrets.DOCKER_USERNAME }}/event-frontend:latest ${{ secrets.DOCKER_USERNAME }}/event-frontend:${{ github.sha }}
+
+      - name: Push Docker images
+        run: |
+          # Push backend images
+          docker push ${{ secrets.DOCKER_USERNAME }}/event-backend:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/event-backend:${{ github.sha }}
+          
+          # Push frontend images
+          docker push ${{ secrets.DOCKER_USERNAME }}/event-frontend:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/event-frontend:${{ github.sha }}
 
   deploy:
     needs: build-and-push
@@ -91,32 +88,3 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: ${{ secrets.EC2_PORT || 22 }}
           timeout: 300s
-          script: |
-            # Ensure docker and docker-compose are available
-            which docker || (curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh)
-            which docker-compose || sudo apt-get update && sudo apt-get install -y docker-compose
-            
-            # Create application directory if it doesn't exist
-            mkdir -p ~/app && cd ~/app
-            
-            # Download docker-compose file (or clone repo)
-            curl -o docker-compose.yml https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.yml
-            
-            # Set environment variables
-            export IMAGE_TAG=${{ github.sha }}
-            
-            # Pull latest images
-            docker-compose pull
-            
-            # Stop existing containers gracefully
-            docker-compose down --timeout 30
-            
-            # Start new containers
-            docker-compose up -d
-            
-            # Clean up old images
-            docker image prune -f
-            
-            # Health check
-            sleep 30
-            docker-compose ps
