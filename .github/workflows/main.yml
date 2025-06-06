@@ -1,0 +1,122 @@
+name: EventService_KIII
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  DOCKER_REGISTRY: docker.io
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run tests
+        run: |
+          # Add your test commands here
+          # docker-compose -f docker-compose.test.yml run --rm test
+          echo "Running tests..."
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/your-app-name
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push with docker-compose (alternative)
+        if: false  # Set to true if you prefer docker-compose
+        run: |
+          # Tag images with commit SHA for better versioning
+          export IMAGE_TAG=${{ github.sha }}
+          docker-compose -f docker-compose.yml build
+          docker-compose -f docker-compose.yml push
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT || 22 }}
+          timeout: 300s
+          script: |
+            # Ensure docker and docker-compose are available
+            which docker || (curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh)
+            which docker-compose || sudo apt-get update && sudo apt-get install -y docker-compose
+            
+            # Create application directory if it doesn't exist
+            mkdir -p ~/app && cd ~/app
+            
+            # Download docker-compose file (or clone repo)
+            curl -o docker-compose.yml https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.yml
+            
+            # Set environment variables
+            export IMAGE_TAG=${{ github.sha }}
+            
+            # Pull latest images
+            docker-compose pull
+            
+            # Stop existing containers gracefully
+            docker-compose down --timeout 30
+            
+            # Start new containers
+            docker-compose up -d
+            
+            # Clean up old images
+            docker image prune -f
+            
+            # Health check
+            sleep 30
+            docker-compose ps
