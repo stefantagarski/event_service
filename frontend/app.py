@@ -6,8 +6,11 @@ import pandas as pd
 
 import os
 
-# Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:5000/api")
+# Configuration - Updated to handle both environment variables
+API_BASE_URL = os.getenv("API_BASE_URL", os.getenv("BACKEND_URL", "http://localhost:5000")) + "/api"
+# Remove trailing /api if BACKEND_URL already includes it
+if API_BASE_URL.endswith("/api/api"):
+    API_BASE_URL = API_BASE_URL.replace("/api/api", "/api")
 
 # Page configuration
 st.set_page_config(
@@ -49,17 +52,21 @@ def make_request(method, endpoint, data=None):
     url = f"{API_BASE_URL}{endpoint}"
     try:
         if method == "GET":
-            response = requests.get(url)
+            response = requests.get(url, timeout=10)
         elif method == "POST":
-            response = requests.post(url, json=data)
+            response = requests.post(url, json=data, timeout=10)
         elif method == "PUT":
-            response = requests.put(url, json=data)
+            response = requests.put(url, json=data, timeout=10)
         elif method == "DELETE":
-            response = requests.delete(url)
+            response = requests.delete(url, timeout=10)
 
         return response.json(), response.status_code
     except requests.exceptions.ConnectionError:
-        return {"error": "Could not connect to the server. Make sure Flask API is running."}, 500
+        return {"error": f"Could not connect to the server at {url}. Make sure Flask API is running."}, 500
+    except requests.exceptions.Timeout:
+        return {"error": "Request timed out. The server might be overloaded."}, 500
+    except Exception as e:
+        return {"error": f"Request failed: {str(e)}"}, 500
 
 
 def display_event_card(event):
@@ -350,11 +357,19 @@ def main():
     # Header
     st.markdown('<h1 class="main-header">🎉 Event Management System</h1>', unsafe_allow_html=True)
 
+    # Debug info (remove in production)
+    with st.expander("🔧 Debug Info", expanded=False):
+        st.write(f"**API Base URL:** {API_BASE_URL}")
+        st.write(f"**Environment Variables:**")
+        st.write(f"- API_BASE_URL: {os.getenv('API_BASE_URL', 'Not set')}")
+        st.write(f"- BACKEND_URL: {os.getenv('BACKEND_URL', 'Not set')}")
+
     # Check API connection
     health_response, health_status = make_request("GET", "/health")
     if health_status != 200:
-        st.error(
-            "⚠️ Cannot connect to the backend API. Please ensure the Flask server is running on http://localhost:5000")
+        st.error(f"⚠️ Cannot connect to the backend API at {API_BASE_URL}")
+        st.error(f"Error: {health_response.get('error', 'Unknown error')}")
+        st.info("Please ensure the Flask server is running and accessible.")
         st.stop()
 
     # Sidebar navigation
@@ -367,6 +382,7 @@ def main():
     # API status
     st.sidebar.success("✅ API Connected")
     st.sidebar.info(f"Status: {health_response.get('status', 'Unknown')}")
+    st.sidebar.info(f"API URL: {API_BASE_URL}")
 
     # Main content
     if st.session_state.show_edit_form:

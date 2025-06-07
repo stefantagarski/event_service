@@ -2,9 +2,8 @@ version: '3.8'
 
 services:
   mongodb:
-    image: mongo:latest
-    container_name: event_mongodb
-    restart: unless-stopped
+    image: mongo:7.0
+    container_name: mongodb
     ports:
       - "27017:27017"
     environment:
@@ -12,58 +11,74 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
       MONGO_INITDB_DATABASE: ${MONGO_DATABASE}
     volumes:
-      - mongodb_data:/data/db  # Use named volume instead of bind mount
+      - mongodb_data:/data/db
+    restart: unless-stopped
     networks:
-      - event_network
+      - app-network
+    # Production optimizations
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
 
   backend:
-    # For development - use build
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    # For production - CI/CD will replace this with image reference
     image: ${DOCKER_USERNAME}/event-backend:${IMAGE_TAG:-latest}
-    container_name: event_backend
-    restart: unless-stopped
+    container_name: flask-backend
     ports:
       - "5000:5000"
     environment:
-      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@event_mongodb:27017/${MONGO_DATABASE}?authSource=admin
+      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017/${MONGO_DATABASE}?authSource=admin
       DATABASE_NAME: ${MONGO_DATABASE}
       SECRET_KEY: ${SECRET_KEY}
       FLASK_ENV: production
     depends_on:
       - mongodb
+    restart: unless-stopped
     networks:
-      - event_network
-    # Remove volume mount for production
-    # volumes:
-    #   - ./backend:/app
+      - app-network
+    # Production optimizations
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   frontend:
-    # For development - use build
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    # For production - CI/CD will replace this with image reference
     image: ${DOCKER_USERNAME}/event-frontend:${IMAGE_TAG:-latest}
-    container_name: event_frontend
-    restart: unless-stopped
+    container_name: streamlit-frontend
     ports:
       - "8501:8501"
+      - "80:8501"    # Also expose on port 80
     environment:
-      API_BASE_URL: http://event_backend:5000/api
+      API_BASE_URL:  http://3.77.202.44:5000/api
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
-      - event_network
-    # Remove volume mount for production
-    # volumes:
-    #   - ./frontend:/app
+      - app-network
+    # Production optimizations
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
 
 volumes:
   mongodb_data:
+    driver: local
 
 networks:
-  event_network:
+  app-network:
     driver: bridge
