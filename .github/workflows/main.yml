@@ -2,281 +2,299 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ "main", "develop" ]
   pull_request:
-    branches: [ main ]
+    branches: [ "main" ]
 
 env:
-  DOCKER_REGISTRY: docker.io
   BACKEND_IMAGE_NAME: stefantagarski/event-backend
   FRONTEND_IMAGE_NAME: stefantagarski/event-frontend
 
 jobs:
-  test:
+  lint-and-test:
     runs-on: ubuntu-latest
-    name: Run Tests
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: Lint Code Base
+        uses: github/super-linter@v4
+        env:
+          VALIDATE_ALL_CODEBASE: false
+          DEFAULT_BRANCH: "main"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Install backend dependencies
-      run: |
-        cd backend
-        pip install -r requirements.txt
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-    - name: Run backend tests
-      run: |
-        cd backend
-        # Add your test commands here
-        # python -m pytest tests/ || true
-        echo "Backend tests completed"
+      - name: Run backend tests
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          # Add your test commands here
+          echo "Backend tests completed"
 
-    - name: Install frontend dependencies
-      run: |
-        cd frontend
-        pip install -r requirements.txt
+      - name: Run frontend tests
+        run: |
+          cd frontend
+          pip install -r requirements.txt
+          # Add your test commands here
+          echo "Frontend tests completed"
 
-    - name: Run frontend tests
-      run: |
-        cd frontend
-        # Add your test commands here
-        # python -m pytest tests/ || true
-        echo "Frontend tests completed"
-
-  build-and-push:
-    needs: test
+  docker-build-and-push:
+    needs: lint-and-test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    outputs:
+      backend-tag: ${{ steps.meta.outputs.backend-tag }}
+      frontend-tag: ${{ steps.meta.outputs.frontend-tag }}
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          logout: true
 
-    - name: Log in to DockerHub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-    - name: Extract metadata for backend
-      id: backend_meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.BACKEND_IMAGE_NAME }}
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=sha,prefix={{branch}}-
-          type=raw,value=latest,enable={{is_default_branch}}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Extract metadata for frontend
-      id: frontend_meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.FRONTEND_IMAGE_NAME }}
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=sha,prefix={{branch}}-
-          type=raw,value=latest,enable={{is_default_branch}}
+      - name: Generate image tags
+        id: meta
+        run: |
+          # Generate tags based on branch and SHA
+          if [[ $GITHUB_REF == "refs/heads/main" ]]; then
+            BACKEND_TAG="${{ env.BACKEND_IMAGE_NAME }}:main-${{ github.sha }}"
+            FRONTEND_TAG="${{ env.FRONTEND_IMAGE_NAME }}:main-${{ github.sha }}"
+            # Also tag as latest for main branch
+            BACKEND_TAGS="${{ env.BACKEND_IMAGE_NAME }}:main-${{ github.sha }},${{ env.BACKEND_IMAGE_NAME }}:latest"
+            FRONTEND_TAGS="${{ env.FRONTEND_IMAGE_NAME }}:main-${{ github.sha }},${{ env.FRONTEND_IMAGE_NAME }}:latest"
+          else
+            BACKEND_TAG="${{ env.BACKEND_IMAGE_NAME }}:develop-${{ github.sha }}"
+            FRONTEND_TAG="${{ env.FRONTEND_IMAGE_NAME }}:develop-${{ github.sha }}"
+            BACKEND_TAGS="${{ env.BACKEND_IMAGE_NAME }}:develop-${{ github.sha }}"
+            FRONTEND_TAGS="${{ env.FRONTEND_IMAGE_NAME }}:develop-${{ github.sha }}"
+          fi
+          
+          echo "backend-tag=${BACKEND_TAG}" >> $GITHUB_OUTPUT
+          echo "frontend-tag=${FRONTEND_TAG}" >> $GITHUB_OUTPUT
+          echo "backend-tags=${BACKEND_TAGS}" >> $GITHUB_OUTPUT
+          echo "frontend-tags=${FRONTEND_TAGS}" >> $GITHUB_OUTPUT
+          
+          echo "Backend will be tagged as: ${BACKEND_TAGS}"
+          echo "Frontend will be tagged as: ${FRONTEND_TAGS}"
 
-    - name: Build and push backend image
-      uses: docker/build-push-action@v5
-      with:
-        context: ./backend
-        file: ./backend/Dockerfile
-        push: true
-        tags: ${{ steps.backend_meta.outputs.tags }}
-        labels: ${{ steps.backend_meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.backend-tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
 
-    - name: Build and push frontend image
-      uses: docker/build-push-action@v5
-      with:
-        context: ./frontend
-        file: ./frontend/Dockerfile
-        push: true
-        tags: ${{ steps.frontend_meta.outputs.tags }}
-        labels: ${{ steps.frontend_meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.frontend-tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
 
-  deploy:
-    needs: build-and-push
+  deploy-to-ec2:
+    needs: docker-build-and-push
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
 
-    - name: Setup SSH key
-      uses: webfactory/ssh-agent@v0.8.0
-      with:
-        ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+      - name: Add EC2 to known hosts
+        run: |
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
-    - name: Add EC2 to known hosts
-      run: |
-        ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+      - name: Deploy application
+        env:
+          BACKEND_IMAGE: ${{ needs.docker-build-and-push.outputs.backend-tag }}
+          FRONTEND_IMAGE: ${{ needs.docker-build-and-push.outputs.frontend-tag }}
+        run: |
+          # Create docker-compose file with exact image tags
+          cat > docker-compose.prod.yml << EOF
+          version: '3.8'
+          services:
+            mongodb:
+              image: mongo:latest
+              container_name: event_mongodb
+              restart: unless-stopped
+              ports:
+                - "27017:27017"
+              environment:
+                MONGO_INITDB_ROOT_USERNAME: admin
+                MONGO_INITDB_ROOT_PASSWORD: \${MONGO_ROOT_PASSWORD}
+                MONGO_INITDB_DATABASE: eventdb
+              volumes:
+                - mongodb_data:/data/db
+              networks:
+                - event_network
+              healthcheck:
+                test: echo 'db.runCommand("ping").ok' | mongosh --quiet
+                interval: 30s
+                timeout: 10s
+                retries: 3
+          
+            backend:
+              image: ${BACKEND_IMAGE}
+              container_name: event_backend
+              restart: unless-stopped
+              ports:
+                - "5000:5000"
+              environment:
+                MONGO_URI: mongodb://admin:\${MONGO_ROOT_PASSWORD}@event_mongodb:27017/eventdb?authSource=admin
+                DATABASE_NAME: eventdb
+                SECRET_KEY: \${SECRET_KEY}
+                FLASK_ENV: production
+              depends_on:
+                mongodb:
+                  condition: service_healthy
+              networks:
+                - event_network
+          
+            frontend:
+              image: ${FRONTEND_IMAGE}
+              container_name: event_frontend
+              restart: unless-stopped
+              ports:
+                - "8501:8501"
+              environment:
+                API_BASE_URL: http://event_backend:5000/api
+              depends_on:
+                - backend
+              networks:
+                - event_network
+          
+          volumes:
+            mongodb_data:
+          
+          networks:
+            event_network:
+              driver: bridge
+          EOF
 
-    - name: Deploy to EC2
-      run: |
-        # Create deployment script
-        cat > deploy.sh << 'EOF'
-        #!/bin/bash
-        set -e
-        
-        # Update system packages
-        sudo apt-get update
-        
-        # Install Docker if not present
-        if ! command -v docker &> /dev/null; then
-            echo "Installing Docker..."
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh get-docker.sh
-            sudo usermod -aG docker $USER
-        fi
-        
-        # Install Docker Compose if not present
-        if ! command -v docker-compose &> /dev/null; then
-            echo "Installing Docker Compose..."
-            sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-            sudo chmod +x /usr/local/bin/docker-compose
-        fi
-        
-        # Create application directory
-        mkdir -p ~/event-app
-        cd ~/event-app
-        
-        # Pull latest images
-        docker pull ${{ env.BACKEND_IMAGE_NAME }}:latest
-        docker pull ${{ env.FRONTEND_IMAGE_NAME }}:latest
-        
-        # Stop existing containers
-        docker-compose down || true
-        
-        # Remove old images to save space
-        docker image prune -f
-        
-        # Start services
-        docker-compose up -d
-        
-        # Wait for services to be healthy
-        echo "Waiting for services to start..."
-        sleep 30
-        
-        # Check service health
-        docker-compose ps
-        
-        echo "Deployment completed successfully!"
-        EOF
-        
-        # Copy files to EC2
-        scp -r . ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/event-app/
-        
-        # Create production docker-compose file
-        cat > docker-compose.prod.yml << 'EOF'
-        version: '3.8'
-        
-        services:
-          mongodb:
-            image: mongo:latest
-            container_name: event_mongodb
-            restart: unless-stopped
-            ports:
-              - "27017:27017"
-            environment:
-              MONGO_INITDB_ROOT_USERNAME: admin
-              MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
-              MONGO_INITDB_DATABASE: eventdb
-            volumes:
-              - mongodb_data:/data/db
-            networks:
-              - event_network
-            healthcheck:
-              test: echo 'db.runCommand("ping").ok' | mongosh --quiet
-              interval: 30s
-              timeout: 10s
-              retries: 3
-        
-          backend:
-            image: ${{ env.BACKEND_IMAGE_NAME }}:latest
-            container_name: event_backend
-            restart: unless-stopped
-            ports:
-              - "5000:5000"
-            environment:
-              MONGO_URI: mongodb://admin:${MONGO_ROOT_PASSWORD}@event_mongodb:27017/eventdb?authSource=admin
-              DATABASE_NAME: eventdb
-              SECRET_KEY: ${SECRET_KEY}
-              FLASK_ENV: production
-            depends_on:
-              mongodb:
-                condition: service_healthy
-            networks:
-              - event_network
-        
-          frontend:
-            image: ${{ env.FRONTEND_IMAGE_NAME }}:latest
-            container_name: event_frontend
-            restart: unless-stopped
-            ports:
-              - "8501:8501"
-            environment:
-              API_BASE_URL: http://event_backend:5000/api
-            depends_on:
-              - backend
-            networks:
-              - event_network
-        
-        volumes:
-          mongodb_data:
-        
-        networks:
-          event_network:
-            driver: bridge
-        EOF
-        
-        # Copy production compose file
-        scp docker-compose.prod.yml ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/event-app/docker-compose.yml
-        
-        # Create environment file
-        cat > .env.prod << EOF
-        MONGO_ROOT_PASSWORD=${{ secrets.MONGO_ROOT_PASSWORD }}
-        SECRET_KEY=${{ secrets.SECRET_KEY }}
-        EOF
-        
-        scp .env.prod ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/event-app/.env
-        
-        # Execute deployment
-        ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} 'bash -s' < deploy.sh
+          # Create environment file
+          cat > .env.prod << EOF
+          MONGO_ROOT_PASSWORD=${{ secrets.MONGO_ROOT_PASSWORD }}
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          EOF
 
-    - name: Verify deployment
-      run: |
-        # Wait a bit for services to fully start
-        sleep 60
-        
-        # Check if services are accessible
-        ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
-        # Check backend health
-        curl -f http://localhost:5000/api/health || echo "Backend health check failed"
-        
-        # Check frontend accessibility
-        curl -f http://localhost:8501/_stcore/health || echo "Frontend health check failed"
-        
-        # Show running containers
-        docker ps
-        
-        # Show container logs if there are issues
-        docker-compose logs --tail=50
-        EOF
+          # Create deployment script
+          cat > deploy.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          echo "🚀 Starting deployment with exact images:"
+          echo "Backend: $BACKEND_IMAGE"
+          echo "Frontend: $FRONTEND_IMAGE"
+          
+          # Install Docker and Docker Compose if needed
+          if ! command -v docker &> /dev/null; then
+              echo "📦 Installing Docker..."
+              curl -fsSL https://get.docker.com -o get-docker.sh
+              sudo sh get-docker.sh
+              sudo usermod -aG docker $USER
+              sudo systemctl start docker
+              sudo systemctl enable docker
+          fi
+          
+          if ! command -v docker-compose &> /dev/null; then
+              echo "📦 Installing Docker Compose..."
+              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+          fi
+          
+          # Setup application directory
+          mkdir -p ~/event-app
+          cd ~/event-app
+          
+          # Pull exact images
+          echo "⬇️ Pulling exact images..."
+          docker pull $BACKEND_IMAGE
+          docker pull $FRONTEND_IMAGE
+          
+          # Stop existing services
+          echo "🛑 Stopping existing services..."
+          docker-compose down || true
+          
+          # Start new services
+          echo "▶️ Starting services with exact images..."
+          docker-compose up -d
+          
+          # Wait and verify
+          echo "⏳ Waiting for services to start..."
+          sleep 30
+          
+          echo "✅ Deployment completed!"
+          docker-compose ps
+          EOF
+
+          # Copy files to EC2 and deploy
+          scp docker-compose.prod.yml ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/event-app/docker-compose.yml
+          scp .env.prod ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/event-app/.env
+          
+          # Execute deployment
+          ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "export BACKEND_IMAGE='${BACKEND_IMAGE}' FRONTEND_IMAGE='${FRONTEND_IMAGE}'; bash -s" < deploy.sh
+
+      - name: Verify deployment
+        env:
+          BACKEND_IMAGE: ${{ needs.docker-build-and-push.outputs.backend-tag }}
+          FRONTEND_IMAGE: ${{ needs.docker-build-and-push.outputs.frontend-tag }}
+        run: |
+          sleep 60
+          
+          ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << EOF
+          echo "🔍 Verifying exact images are running:"
+          docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+          
+          echo "🎯 Checking exact image matches:"
+          docker ps | grep "${BACKEND_IMAGE}" && echo "✅ Backend image matches" || echo "❌ Backend mismatch"
+          docker ps | grep "${FRONTEND_IMAGE}" && echo "✅ Frontend image matches" || echo "❌ Frontend mismatch"
+          
+          echo "🏥 Health checks:"
+          curl -f http://localhost:5000/api/health && echo "✅ Backend healthy" || echo "❌ Backend unhealthy"
+          curl -f http://localhost:8501/_stcore/health && echo "✅ Frontend healthy" || echo "❌ Frontend unhealthy"
+          EOF
+
+  notify-status:
+    needs: [lint-and-test, docker-build-and-push, deploy-to-ec2]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Report status
+        run: |
+          if [[ "${{ needs.deploy-to-ec2.result }}" == "success" ]]; then
+            echo "🎉 Deployment successful!"
+            echo "🌐 Frontend: http://${{ secrets.EC2_HOST }}:8501"
+            echo "🔗 Backend API: http://${{ secrets.EC2_HOST }}:5000/api"
+          else
+            echo "💥 Deployment failed!"
+          fi
