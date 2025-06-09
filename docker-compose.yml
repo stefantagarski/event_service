@@ -1,4 +1,4 @@
-version: '3.8'
+# Docker Compose file for Event Management System (Debug Version)
 
 services:
   mongodb:
@@ -31,12 +31,7 @@ services:
       - mongodb
     networks:
       - event_network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+    # Temporarily remove health check to debug
 
   frontend:
     image: stefantagarski/event-frontend:latest
@@ -48,10 +43,10 @@ services:
       API_BASE_URL: http://event_backend:5000/api
       BACKEND_URL: http://event_backend:5000
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
     networks:
       - event_network
+    # Remove health check dependency temporarily
 
 volumes:
   mongodb_data:
