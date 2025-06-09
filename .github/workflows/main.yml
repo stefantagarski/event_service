@@ -74,98 +74,29 @@ jobs:
       - name: Add EC2 to known hosts
         run: ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Create deployment script
+      - name: Create minimal deploy.sh
         run: |
-          cat > deploy.sh << 'EOF'
+          cat > deploy.sh <<EOF
           #!/bin/bash
           set -e
 
-          BACKEND_IMAGE=${{ needs.docker-build-and-push.outputs.backend-tag }}
-          FRONTEND_IMAGE=${{ needs.docker-build-and-push.outputs.frontend-tag }}
+          echo "📦 Pulling Docker images..."
+          docker pull ${{ needs.docker-build-and-push.outputs.backend-tag }}
+          docker pull ${{ needs.docker-build-and-push.outputs.frontend-tag }}
 
-          echo "📦 Pulling Docker images from Docker Hub..."
-          docker pull $BACKEND_IMAGE
-          docker pull $FRONTEND_IMAGE
-
-          echo "🛑 Stopping existing containers..."
+          echo "🛑 Stopping old containers (if any)..."
           docker-compose -f ~/event-app/docker-compose.yml down || true
 
-          echo "📝 Creating Docker Compose file..."
-          cat > ~/event-app/docker-compose.yml << COMPOSE
-          version: '3.8'
-          services:
-            mongodb:
-              image: mongo:latest
-              container_name: event_mongodb
-              restart: unless-stopped
-              ports:
-                - "27017:27017"
-              environment:
-                MONGO_INITDB_ROOT_USERNAME: admin
-                MONGO_INITDB_ROOT_PASSWORD: \${MONGO_ROOT_PASSWORD}
-                MONGO_INITDB_DATABASE: eventdb
-              volumes:
-                - mongodb_data:/data/db
-              networks:
-                - event_network
-              healthcheck:
-                test: echo 'db.runCommand("ping").ok' | mongosh --quiet
-                interval: 30s
-                timeout: 10s
-                retries: 3
-
-            backend:
-              image: $BACKEND_IMAGE
-              container_name: event_backend
-              restart: unless-stopped
-              ports:
-                - "5000:5000"
-              environment:
-                MONGO_URI: mongodb://admin:\${MONGO_ROOT_PASSWORD}@event_mongodb:27017/eventdb?authSource=admin
-                SECRET_KEY: \${SECRET_KEY}
-                FLASK_ENV: production
-              depends_on:
-                mongodb:
-                  condition: service_healthy
-              networks:
-                - event_network
-
-            frontend:
-              image: $FRONTEND_IMAGE
-              container_name: event_frontend
-              restart: unless-stopped
-              ports:
-                - "8501:8501"
-              environment:
-                API_BASE_URL: http://event_backend:5000/api
-              depends_on:
-                - backend
-              networks:
-                - event_network
-
-          volumes:
-            mongodb_data:
-
-          networks:
-            event_network:
-              driver: bridge
-          COMPOSE
-
-          echo "🔐 Writing .env file..."
-          cat > ~/event-app/.env << ENV
-          MONGO_ROOT_PASSWORD=${{ secrets.MONGO_ROOT_PASSWORD }}
-          SECRET_KEY=${{ secrets.SECRET_KEY }}
-          ENV
-
-          echo "🚀 Starting services..."
+          echo "🚀 Starting new containers..."
           cd ~/event-app
           docker-compose up -d
 
-          echo "✅ Deployment done"
+          echo "✅ Deployment complete!"
           docker ps
           EOF
 
-      - name: Transfer and run deployment script on EC2
-        run: |
-          scp deploy.sh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/deploy.sh
-          ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "bash /home/${{ secrets.EC2_USER }}/deploy.sh"
+      - name: Copy deploy script to EC2
+        run: scp deploy.sh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/deploy.sh
+
+      - name: Execute deploy script on EC2
+        run: ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "bash /home/${{ secrets.EC2_USER }}/deploy.sh"
