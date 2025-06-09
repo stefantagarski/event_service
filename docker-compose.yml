@@ -12,7 +12,7 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
       MONGO_INITDB_DATABASE: ${MONGO_DATABASE}
     volumes:
-      - ./data:/data/db
+      - mongodb_data:/data/db
     networks:
       - event_network
 
@@ -23,14 +23,20 @@ services:
     ports:
       - "5000:5000"
     environment:
-      MONGO_URI: mongodb://admin:admin@event_mongodb:27017/eventdb?authSource=eventdb
-      DATABASE_NAME: eventdb
+      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@event_mongodb:27017/${MONGO_DATABASE}?authSource=admin
+      DATABASE_NAME: ${MONGO_DATABASE}
       SECRET_KEY: ${SECRET_KEY}
       FLASK_ENV: production
     depends_on:
       - mongodb
     networks:
       - event_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   frontend:
     image: stefantagarski/event-frontend:latest
@@ -40,8 +46,10 @@ services:
       - "8501:8501"
     environment:
       API_BASE_URL: http://event_backend:5000/api
+      BACKEND_URL: http://event_backend:5000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - event_network
 
