@@ -2,8 +2,9 @@ version: '3.8'
 
 services:
   mongodb:
-    image: mongo:7.0
-    container_name: mongodb
+    image: mongo:latest
+    container_name: event_mongodb
+    restart: unless-stopped
     ports:
       - "27017:27017"
     environment:
@@ -11,74 +12,49 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
       MONGO_INITDB_DATABASE: ${MONGO_DATABASE}
     volumes:
-      - mongodb_data:/data/db
-    restart: unless-stopped
+      - ./data:/data/db
     networks:
-      - app-network
-    # Production optimizations
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 256M
+      - event_network
 
   backend:
-    image: ${DOCKER_USERNAME}/event-backend:${IMAGE_TAG:-latest}
-    container_name: flask-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: event_backend
+    restart: unless-stopped
     ports:
       - "5000:5000"
     environment:
-      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017/${MONGO_DATABASE}?authSource=admin
-      DATABASE_NAME: ${MONGO_DATABASE}
+      MONGO_URI: mongodb://admin:admin@event_mongodb:27017/eventdb?authSource=eventdb
+      DATABASE_NAME: eventdb
       SECRET_KEY: ${SECRET_KEY}
-      FLASK_ENV: production
+      FLASK_ENV: development
     depends_on:
       - mongodb
-    restart: unless-stopped
     networks:
-      - app-network
-    # Production optimizations
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 256M
-    # Health check
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      - event_network
+    volumes:
+      - ./backend:/app
 
   frontend:
-    image: ${DOCKER_USERNAME}/event-frontend:${IMAGE_TAG:-latest}
-    container_name: streamlit-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: event_frontend
+    restart: unless-stopped
     ports:
       - "8501:8501"
-      - "80:8501"    # Also expose on port 80
     environment:
-      API_BASE_URL:  http://3.77.202.44:5000/api
+      API_BASE_URL: http://event_backend:5000/api
     depends_on:
-      backend:
-        condition: service_healthy
-    restart: unless-stopped
+      - backend
     networks:
-      - app-network
-    # Production optimizations
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 256M
-
+      - event_network
+    volumes:
+      - ./frontend:/app
 volumes:
   mongodb_data:
-    driver: local
 
 networks:
-  app-network:
+  event_network:
     driver: bridge
