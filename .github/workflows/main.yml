@@ -2,121 +2,71 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main", "develop" ]
+    branches: [main, develop]
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
 
 env:
-  BACKEND_IMAGE_NAME: stefantagarski/event-backend
-  FRONTEND_IMAGE_NAME: stefantagarski/event-frontend
+  REGISTRY: docker.io
+  BACKEND_IMAGE: stefantagarski/event-backend
+  FRONTEND_IMAGE: stefantagarski/event-frontend
 
 jobs:
-  docker-build-and-push:
+  build:
     runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.meta.outputs.tag }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
-          logout: true
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Set image tag
+        id: tag
+        run: echo "tag=${{ github.ref == 'refs/heads/main' && 'latest' || 'develop' }}" >> $GITHUB_OUTPUT
 
-      - name: Generate image tags
-        id: meta
+      - name: Build and push images
         run: |
-          if [[ $GITHUB_REF == "refs/heads/main" ]]; then
-            echo "tag=latest" >> $GITHUB_OUTPUT
-            echo "backend-image=${{ env.BACKEND_IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
-            echo "frontend-image=${{ env.FRONTEND_IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
-          else
-            echo "tag=develop" >> $GITHUB_OUTPUT
-            echo "backend-image=${{ env.BACKEND_IMAGE_NAME }}:develop" >> $GITHUB_OUTPUT
-            echo "frontend-image=${{ env.FRONTEND_IMAGE_NAME }}:develop" >> $GITHUB_OUTPUT
-          fi
+          TAG=${{ steps.tag.outputs.tag }}
+          
+          # Build and push backend
+          docker build -t ${{ env.BACKEND_IMAGE }}:$TAG ./backend
+          docker push ${{ env.BACKEND_IMAGE }}:$TAG
+          
+          # Build and push frontend  
+          docker build -t ${{ env.FRONTEND_IMAGE }}:$TAG ./frontend
+          docker push ${{ env.FRONTEND_IMAGE }}:$TAG
 
-      - name: Build and push backend
-        uses: docker/build-push-action@v6
-        with:
-          context: ./backend
-          file: ./backend/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.backend-image }}
-          platforms: linux/amd64
-
-      - name: Build and push frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.frontend-image }}
-          platforms: linux/amd64
-
-  deploy-to-ec2:
-    needs: docker-build-and-push
+  deploy:
+    needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Setup SSH access
-        uses: webfactory/ssh-agent@v0.8.0
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-
-      - name: Add EC2 to known hosts
-        run: ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-
-      - name: Transfer repo files to EC2
-        run: |
-          rsync -avz --exclude='.git' ./ ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/event-app/
-
-      - name: Create and run deployment script remotely
-        run: |
-          ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
-          set -e
-          echo "📦 Pulling latest Docker images..."
-          docker pull stefantagarski/event-backend:latest
-          docker pull stefantagarski/event-frontend:latest
-
-          echo "🔐 Writing .env file..."
-          cat > /home/${USER}/event-app/.env << ENV
-          MONGO_ROOT_USERNAME=${{ secrets.MONGO_ROOT_USERNAME }}
-          MONGO_ROOT_PASSWORD=${{ secrets.MONGO_ROOT_PASSWORD }}
-          MONGO_DATABASE=eventdb
-          SECRET_KEY=${{ secrets.SECRET_KEY }}
-          ENV
-
-          echo "🛑 Stopping old containers..."
-          cd /home/${USER}/event-app
-          docker-compose down || true
-
-          # Clean up old volumes if needed
-          echo "🧹 Cleaning up..."
-          docker system prune -f || true
-
-          echo "🚀 Starting new containers..."
-          docker-compose --env-file .env up -d
-
-          echo "⏳ Waiting for services to be ready..."
-          sleep 30
-
-          echo "🔍 Checking service status..."
-          docker ps
-          echo "Backend logs:"
-          docker logs event_backend --tail=20
-          echo "MongoDB logs:"
-          docker logs event_mongodb --tail=20
-
-          echo "✅ Deployment complete"
-          EOF
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script: |
+            cd ~/event-app
+            
+            # Create environment file
+            cat > .env << EOF
+            MONGO_ROOT_USERNAME=${{ secrets.MONGO_ROOT_USERNAME }}
+            MONGO_ROOT_PASSWORD=${{ secrets.MONGO_ROOT_PASSWORD }}
+            MONGO_DATABASE=eventdb
+            SECRET_KEY=${{ secrets.SECRET_KEY }}
+            EOF
+            
+            # Deploy with latest images
+            docker compose pull
+            docker compose down
+            docker compose up -d
+            
+            # Cleanup
+            docker image prune -f
