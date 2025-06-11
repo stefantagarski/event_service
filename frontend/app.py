@@ -283,69 +283,6 @@ def edit_event_form():
                     st.error(f"❌ Error: {response.get('error', 'Unknown error')}")
 
 
-def analytics_dashboard():
-    """Display analytics dashboard"""
-    st.subheader("📊 Analytics Dashboard")
-
-    response, status_code = make_request("GET", "/events")
-
-    if status_code == 200:
-        events = response.get("events", [])
-
-        if not events:
-            st.info("No events available for analytics.")
-            return
-
-        # Convert to DataFrame for analysis
-        df = pd.DataFrame(events)
-        df['date'] = pd.to_datetime(df['date'])
-        df['month'] = df['date'].dt.to_period('M')
-
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.metric("Total Events", len(events))
-
-        with col2:
-            total_capacity = df['capacity'].sum()
-            st.metric("Total Capacity", f"{total_capacity:,}")
-
-        with col3:
-            avg_capacity = df['capacity'].mean()
-            st.metric("Avg Capacity", f"{avg_capacity:.1f}")
-
-        with col4:
-            upcoming_events = df[df['date'] >= datetime.now().date()]
-            st.metric("Upcoming Events", len(upcoming_events))
-
-        # Charts
-        st.subheader("📈 Event Distribution")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            # Events by month
-            monthly_counts = df.groupby('month').size()
-            st.bar_chart(monthly_counts)
-            st.caption("Events by Month")
-
-        with col2:
-            # Top locations
-            location_counts = df['location'].value_counts().head(10)
-            st.bar_chart(location_counts)
-            st.caption("Top Event Locations")
-
-        # Recent events table
-        st.subheader("📋 Recent Events")
-        recent_events = df.sort_values('created_at', ascending=False).head(10)[
-            ['title', 'date', 'location', 'organizer', 'capacity']
-        ]
-        st.dataframe(recent_events, use_container_width=True)
-
-    else:
-        st.error(f"❌ Error loading analytics: {response.get('error', 'Unknown error')}")
-
-
 def main():
     """Main application"""
     # Initialize session state
@@ -391,8 +328,6 @@ def main():
         create_event_form()
     elif page == "📅 View Events":
         display_all_events()
-    elif page == "📊 Analytics":
-        analytics_dashboard()
 
 
 if __name__ == "__main__":
