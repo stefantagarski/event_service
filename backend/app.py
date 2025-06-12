@@ -11,7 +11,15 @@ app.config.from_object(Config)
 CORS(app)
 
 # MongoDB connection
-client = MongoClient(app.config['MONGO_URI'])
+mongo_host = os.getenv('MONGO_HOST', 'localhost')
+mongo_port = os.getenv('MONGO_PORT', '27017')
+mongo_username = os.getenv('MONGO_ROOT_USERNAME')
+mongo_password = os.getenv('MONGO_ROOT_PASSWORD')
+database_name = os.getenv('DATABASE_NAME', 'eventdb')
+
+mongo_uri = f"mongodb://{mongo_username}:{mongo_password}@{mongo_host}:{mongo_port}/{database_name}?authSource=admin"
+
+client = MongoClient(mongo_uri)
 db = client[app.config['DATABASE_NAME']]
 events_collection = db.events
 
