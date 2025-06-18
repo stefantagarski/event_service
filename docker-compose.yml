@@ -31,7 +31,6 @@ services:
       - mongodb
     networks:
       - event_network
-    # Temporarily remove health check to debug
 
   frontend:
     image: stefantagarski/event-frontend:latest
@@ -46,7 +45,6 @@ services:
       - backend
     networks:
       - event_network
-    # Remove health check dependency temporarily
 
 volumes:
   mongodb_data:
