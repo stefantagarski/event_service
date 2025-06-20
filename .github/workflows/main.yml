@@ -29,15 +29,15 @@ jobs:
 
       - name: Build and push images
         run: |
-          TAG=${{ steps.tag.outputs.tag }}
+          
           
           # Build and push backend
-          docker build -t ${{ env.BACKEND_IMAGE }}:$TAG ./backend
-          docker push ${{ env.BACKEND_IMAGE }}:$TAG
+          docker build -t ${{ env.BACKEND_IMAGE }}:1.0 ./backend
+          docker push ${{ env.BACKEND_IMAGE }}:1.0
           
           # Build and push frontend  
-          docker build -t ${{ env.FRONTEND_IMAGE }}:$TAG ./frontend
-          docker push ${{ env.FRONTEND_IMAGE }}:$TAG
+          docker build -t ${{ env.FRONTEND_IMAGE }}:1.0 ./frontend
+          docker push ${{ env.FRONTEND_IMAGE }}:1.0
 
   deploy:
     needs: build
