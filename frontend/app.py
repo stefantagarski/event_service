@@ -313,7 +313,7 @@ def main():
     st.sidebar.title("Navigation")
     page = st.sidebar.selectbox(
         "Choose a page",
-        ["📝 Create Event", "📅 View Events", "📊 Analytics"]
+        ["📝 Create Event", "📅 View Events"]
     )
 
     # API status
