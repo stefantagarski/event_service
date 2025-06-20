@@ -72,4 +72,4 @@ jobs:
             docker ps
 
             echo "Docker Compose Logs:"
-            docker compose logs --tail=100
+            docker-compose logs --tail=100
