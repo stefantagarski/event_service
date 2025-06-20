@@ -10,6 +10,7 @@ env:
   REGISTRY: docker.io
   BACKEND_IMAGE: stefantagarski/event-backend
   FRONTEND_IMAGE: stefantagarski/event-frontend
+  IMAGE_TAG: 1.0
 
 jobs:
   build:
@@ -23,19 +24,15 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      - name: Set image tag
-        id: tag
-        run: echo "tag=${{ github.ref == 'refs/heads/main' && 'latest' || 'develop' }}" >> $GITHUB_OUTPUT
-
-      - name: Build and push images
+      - name: Build and push Docker images with tag 1.0
         run: |
           # Build and push backend
-          docker build -t ${{ env.BACKEND_IMAGE }}:1.0 ./backend
-          docker push ${{ env.BACKEND_IMAGE }}:1.0
-          
+          docker build -t ${{ env.BACKEND_IMAGE }}:${{ env.IMAGE_TAG }} ./backend
+          docker push ${{ env.BACKEND_IMAGE }}:${{ env.IMAGE_TAG }}
+
           # Build and push frontend  
-          docker build -t ${{ env.FRONTEND_IMAGE }}:1.0 ./frontend
-          docker push ${{ env.FRONTEND_IMAGE }}:1.0
+          docker build -t ${{ env.FRONTEND_IMAGE }}:${{ env.IMAGE_TAG }} ./frontend
+          docker push ${{ env.FRONTEND_IMAGE }}:${{ env.IMAGE_TAG }}
 
   deploy:
     needs: build
@@ -52,7 +49,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           script: |
             cd ~/event-app
-            
+
             # Create environment file
             cat > .env << EOF
             MONGO_ROOT_USERNAME=${{ secrets.MONGO_ROOT_USERNAME }}
@@ -60,11 +57,11 @@ jobs:
             MONGO_DATABASE=eventdb
             SECRET_KEY=${{ secrets.SECRET_KEY }}
             EOF
-            
-            # Deploy with latest images
-            docker compose pull
-            docker compose down
-            docker compose up -d
-            
+
+            # Pull and deploy with 1.0-tagged images
+            docker compose pull --ignore-pull-failures
+            docker compose down --remove-orphans
+            docker compose up -d --force-recreate
+
             # Cleanup
             docker image prune -f
